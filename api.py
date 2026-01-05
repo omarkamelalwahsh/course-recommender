@@ -13,7 +13,7 @@ from src.recommender import CourseRecommender
 app = FastAPI(
     title="Zedny Course Recommender API",
     description="AI-Powered Course Recommendation System",
-    version="1.2.0"
+    version="1.3.0"
 )
 
 recommender = None
