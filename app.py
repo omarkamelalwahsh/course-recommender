@@ -6,209 +6,134 @@ from src.recommender import CourseRecommender
 
 # Page Configuration
 st.set_page_config(
-    page_title="Smart Course Recommender",
+    page_title="Zedny Smart Recommender",
     page_icon="🎓",
     layout="wide"
 )
 
-# Custom CSS for premium look but WITHOUT images
+# Minimalist Style
 st.markdown("""
 <style>
     .course-card {
         background-color: #ffffff;
-        border-radius: 8px;
-        padding: 24px;
-        margin-bottom: 24px;
-        border: 1px solid #e0e0e0;
-        box-shadow: 0 2px 4px rgba(0,0,0,0.05);
-    }
-    .meta-info {
-        color: #666;
-        font-size: 0.9em;
-        margin-bottom: 12px;
+        border-radius: 4px;
+        padding: 20px;
+        margin-bottom: 20px;
+        border-left: 5px solid #1a73e8;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.1);
     }
     .rank-badge {
         background-color: #1a73e8;
         color: white;
-        padding: 4px 12px;
+        padding: 2px 10px;
         border-radius: 4px;
-        font-weight: 700;
+        font-weight: bold;
         float: right;
     }
-    .inferred-badge {
-        background-color: #e8f0fe;
-        color: #1967d2;
-        padding: 6px 16px;
-        border-radius: 20px;
-        font-weight: 500;
-        margin-bottom: 20px;
-        display: inline-block;
-    }
-    .score-breakdown {
-        background-color: #f8f9fa;
-        padding: 10px;
-        border-radius: 6px;
+    .meta-text {
         font-size: 0.85em;
-        margin-top: 15px;
-        border: 1px dashed #ced4da;
-    }
-    .token-match {
-        color: #28a745;
-        font-weight: 600;
+        color: #5f6368;
+        margin-bottom: 10px;
     }
 </style>
 """, unsafe_allow_html=True)
 
-# --- 1. Global Singleton Recommender (Auto-load only) ---
-@st.cache_resource(show_spinner="Initializing AI Engine...")
-def get_recommender():
-    rec = CourseRecommender()
+# Singleton Recommender
+@st.cache_resource
+def get_rec():
+    r = CourseRecommender()
     path = "data/courses.csv"
     if not os.path.exists(path):
-        st.error(f"Critical Error: {path} not found.")
+        st.error(f"Dataset not found at {path}")
         st.stop()
-    rec.load_courses(path)
-    return rec
+    r.load_courses(path)
+    return r
 
-try:
-    rec = get_recommender()
-except Exception as e:
-    st.error(f"System Load Error: {e}")
-    st.stop()
+rec = get_rec()
 
-# --- 2. Sidebar Configuration (PRE-RUN FILTERS) ---
+# Sidebar
 with st.sidebar:
-    st.title("⚙️ Filter Settings")
+    st.title("Settings")
     st.markdown("---")
-    st.subheader("🎯 Pre-Search (Hard Filters)")
-    
     pre_lvls = ["Any", "White", "Beginner", "Intermediate", "Advanced"]
-    cats = ["Any"] + sorted(list(rec.courses_df['category'].unique()))
+    pre_cats = ["Any"] + sorted(list(rec.courses_df['category'].unique()))
     
-    sel_level = st.selectbox("Pre-Level", pre_lvls)
-    sel_cat = st.selectbox("Pre-Category", cats)
-    
+    sel_lvl = st.selectbox("Level (Pre-filter)", pre_lvls)
+    sel_cat = st.selectbox("Category (Pre-filter)", pre_cats)
     max_h = int(rec.courses_df['duration_hours'].max()) + 1
-    sel_dur = st.slider("Pre-Max Duration (Hours)", 0, max_h, max_h)
+    sel_h = st.slider("Max Duration (Hours)", 0, max_h, max_h)
     
     st.markdown("---")
-    top_k = st.number_input("Candidates", 5, 100, 30)
-    debug_mode = st.checkbox("Show Development Logs")
+    top_k = st.number_input("Max Results", 5, 100, 30)
+    debug_on = st.checkbox("Show Debug Logs")
 
-# --- 3. Main Content ---
-st.title("🎓 Smart Course Recommender")
-st.markdown("Discover relevant courses using Semantic + Keyword Hybrid matching.")
+# Main UI
+st.title("🎓 Zedny Smart Course Recommender")
+st.markdown("Enter keywords to find relevant courses with 100% precision.")
 
-query_col, btn_col = st.columns([4, 1])
-with query_col:
-    user_query = st.text_input("Search for topics...", placeholder="e.g., Python for ML")
-with btn_col:
-    st.write("") # padding
-    st.write("") # padding
-    go_btn = st.button("Get Recommendations", type="primary", use_container_width=True)
+q_col, b_col = st.columns([4, 1])
+with q_col:
+    query = st.text_input("What do you want to learn?", placeholder="e.g. Python, SQL, Marketing")
+with b_col:
+    st.write("")
+    st.write("")
+    btn = st.button("Search", type="primary", use_container_width=True)
 
-# --- 4. Logic ---
-if go_btn or (user_query and "res" not in st.session_state):
-    if not user_query.strip():
-        st.warning("Please enter a query.")
+if btn or (query and "res_strict" not in st.session_state):
+    if not query.strip():
+        st.warning("Please enter a search query.")
     else:
-        with st.spinner("AI analyzing relevance..."):
-            pre_f = {"level": sel_level, "category": sel_cat, "max_duration": sel_dur}
-            pkg = rec.recommend(user_query, top_k=top_k, pre_filters=pre_f)
-            st.session_state["res"] = pkg
+        with st.spinner("Filtering dataset..."):
+            pre_f = {"level": sel_lvl, "category": sel_cat, "max_duration": sel_h}
+            res = rec.recommend(query, top_k=top_k, pre_filters=pre_f)
+            st.session_state["res_strict"] = res
 
-# --- 5. Display Results ---
-if "res" in st.session_state:
-    res_pkg = st.session_state["res"]
-    raw_results = res_pkg.get("results", [])
-    debug = res_pkg.get("debug_info", {})
+# Results
+if "res_strict" in st.session_state:
+    res = st.session_state["res_strict"]
+    data = res.get("results", [])
+    dbg = res.get("debug_info", {})
     
-    # LEVEL INFERENCE BADGE
-    st.markdown(f'<div class="inferred-badge">Inferred Level: {debug.get("inferred_level", "Unknown")}</div>', unsafe_allow_html=True)
+    # ERROR MESSAGE
+    if dbg.get("error_message"):
+        st.error(dbg["error_message"])
     
-    if debug.get("keyword_warning"):
-        st.error(f"⚠️ {debug['keyword_warning']}")
-        
-    if debug_mode:
-        with st.expander("🛠️ Debug Logs"):
-            st.json(debug)
+    if debug_on:
+        with st.expander("Debug Details"):
+            st.json(dbg)
 
-    if not raw_results:
-        if not debug.get("keyword_warning"):
-            st.info("No courses match your pre-filters or keywords.")
-    else:
-        # --- 6. POST-RUN FILTERS ---
+    if data:
         st.markdown("---")
-        st.subheader("🔍 Refine these results (Post-Filters)")
-        post_col1, post_col2, post_col3 = st.columns(3)
+        # Post-filters
+        p_c1, p_c2 = st.columns(2)
+        with p_c1:
+            p_cat = st.multiselect("Refine Category", sorted(list(set(r['category'] for r in data))))
+        with p_c2:
+            p_lvl = st.multiselect("Refine Level", sorted(list(set(r['level'] for r in data))))
+            
+        filtered = data
+        if p_cat: filtered = [r for r in filtered if r['category'] in p_cat]
+        if p_lvl: filtered = [r for r in filtered if r['level'] in p_lvl]
         
-        with post_col1:
-            post_cats = st.multiselect("Filter by Category", sorted(list(set(r['category'] for r in raw_results))))
-        with post_col2:
-            post_lvls = st.multiselect("Filter by Level", sorted(list(set(r['level'] for r in raw_results))))
-        with post_col3:
-            st.write("") 
-            filt_inst = st.checkbox("Only with Instructor Name")
-
-        # Application
-        filtered = raw_results
-        if post_cats:
-            filtered = [r for r in filtered if r['category'] in post_cats]
-        if post_lvls:
-            filtered = [r for r in filtered if r['level'] in post_lvls]
-        if filt_inst:
-            filtered = [r for r in filtered if r.get('instructor') and r['instructor'] != 'Unknown']
-
-        st.write(f"Showing {len(filtered)} results")
+        st.info(f"Showing {len(filtered)} relevant courses")
         
-        # Download
-        st.download_button("📥 Download Results (JSON)", json.dumps(filtered, indent=2), "recommendations.json", "application/json")
-        st.markdown("---")
-
-        # Cards
         for c in filtered:
             with st.container():
-                # RANK BADGE
                 st.markdown(f'<span class="rank-badge">Rank: {c["rank"]}/10</span>', unsafe_allow_html=True)
                 
-                # HYPERLINK TITLE
-                title = c['title']
-                url = c.get('course_link', '#')
-                if url and url != '#':
-                    st.markdown(
-                        f'<a href="{url}" target="_blank" style="text-decoration:none; font-size:24px; font-weight:700; color:#1a73e8;">{title}</a>',
-                        unsafe_allow_html=True
-                    )
+                # Title Link
+                url = c.get('course_link', '')
+                if url:
+                    st.markdown(f'<a href="{url}" target="_blank" style="text-decoration:none; font-size:1.4em; font-weight:bold; color:#1a73e8;">{c["title"]}</a>', unsafe_allow_html=True)
                 else:
-                    st.markdown(f'<h3 style="margin:0;">{title}</h3>', unsafe_allow_html=True)
-
-                # META
-                st.markdown(f"""
-                <div class="meta-info">
-                    {c['category']} | {c['level']} | {c['instructor']}
-                </div>
-                """, unsafe_allow_html=True)
+                    st.subheader(c['title'])
                 
-                # DESCRIPTION
-                st.markdown(f'<div style="margin-bottom: 12px;">{c["description"][:280]}...</div>', unsafe_allow_html=True)
+                st.markdown(f'<div class="meta-text">{c["category"]} | {c["level"]} | {c["instructor"]}</div>', unsafe_allow_html=True)
+                st.write(f"{c['description'][:300]}...")
                 
-                # SKILLS
+                # Skills
                 sk = str(c['skills']).split('|')
-                st.markdown(" ".join([f"`{s}`" for s in sk if s]))
-
-                # SCORE EXPLAINABILITY
-                matches = c.get('matched_tokens', [])
-                match_str = ", ".join([f'<span class="token-match">{m}</span>' for m in matches]) if matches else "None"
-                
-                st.markdown(f"""
-                <div class="score-breakdown">
-                    <b>Explainability:</b><br>
-                    • Matched Tokens: {match_str}<br>
-                    • Hybrid Score: <b>{c['final_score']:.3f}</b> (Semantic: {c['semantic_score']:.2f} | Keyword: {c['keyword_score']:.2f})
-                </div>
-                """, unsafe_allow_html=True)
-                
-                st.markdown('<div style="height:20px;"></div>', unsafe_allow_html=True)
+                st.markdown(" ".join([f"`{s}`" for s in sk if s.strip()]))
                 st.markdown("---")
 else:
-    st.info("👈 Use the sidebar for hard filters and enter a topic to start.")
+    st.info("👈 Enter a topic and click Search to begin.")

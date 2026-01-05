@@ -11,9 +11,8 @@ import os
 from src.recommender import CourseRecommender
 
 app = FastAPI(
-    title="Zedny Course Recommender API",
-    description="AI-Powered Course Recommendation System",
-    version="1.3.0"
+    title="Zedny Strict Recommender API",
+    version="1.4.0"
 )
 
 recommender = None
@@ -32,7 +31,6 @@ class RecommendRequest(BaseModel):
 
 class RecommendResponse(BaseModel):
     timestamp: str
-    inferred_level: str
     results: List[Dict[str, Any]]
     debug_info: Dict[str, Any]
 
@@ -41,8 +39,7 @@ def health():
     rec = get_recommender()
     return {
         "status": "healthy",
-        "dataset_size": len(rec.courses_df) if rec.courses_df is not None else 0,
-        "timestamp": datetime.now().isoformat()
+        "dataset_size": len(rec.courses_df) if rec.courses_df is not None else 0
     }
 
 @app.post("/recommend", response_model=RecommendResponse)
@@ -56,7 +53,6 @@ def recommend(request: RecommendRequest):
         )
         return RecommendResponse(
             timestamp=datetime.now().isoformat(),
-            inferred_level=response["debug_info"]["inferred_level"],
             results=response["results"],
             debug_info=response["debug_info"]
         )
