@@ -1,14 +1,7 @@
 ﻿import streamlit as st
 import pandas as pd
-import hashlib
 import os
 from src.recommender import CourseRecommender
-
-from src.recommender import CourseRecommender
-try:
-    from sentence_transformers import SentenceTransformer
-except ImportError:
-    SentenceTransformer = None
 
 # Page Configuration
 st.set_page_config(
@@ -17,95 +10,57 @@ st.set_page_config(
     layout="wide"
 )
 
-# --- 0. Optimized Model Loading (Cached Global Resource) ---
-@st.cache_resource(show_spinner="Loading AI Model (Run Once)...")
-def load_all_minilm_model():
+# --- 1. Global Singleton Recommender (Cached) ---
+@st.cache_resource(show_spinner="Initializing Course Recommender System...")
+def get_recommender():
     """
-    Load the SentenceTransformer model once and cache it in memory.
-    This prevents re-loading/downloading on every session start.
+    Initialize Recommender and Load Data ONCE per app lifecycle.
     """
-    if SentenceTransformer is None:
-        return None
-    return SentenceTransformer('all-MiniLM-L6-v2')
+    rec = CourseRecommender()
+    
+    # Automatic Data Loading Strategy
+    target_path = "data/courses.csv"
+    
+    # We pass the path; rec.load_courses handles fallback if missing/invalid
+    rec.load_courses(target_path)
+    
+    return rec
 
-# --- 1. Session State Initialization ---
-if "recommender" not in st.session_state:
-    # Load model from cache
-    cached_model = load_all_minilm_model()
-    # Initialize recommender with cached model
-    st.session_state["recommender"] = CourseRecommender(model=cached_model)
-if "raw_results" not in st.session_state:
-    st.session_state["raw_results"] = None
-if "last_debug_info" not in st.session_state:
-    st.session_state["last_debug_info"] = None
-if "query_input" not in st.session_state:
-    st.session_state["query_input"] = ""
-if "loaded_source_hash" not in st.session_state:
-    st.session_state["loaded_source_hash"] = None
+# Initialize system
+try:
+    rec = get_recommender()
+except Exception as e:
+    st.error(f"Critical System Error: {e}")
+    st.stop()
 
-# --- 2. Sidebar: Dataset & Configuration ---
+# Determine Status Message
+# We check if the loaded data matches fallback data logic or file existence
+data_path = "data/courses.csv"
+if os.path.exists(data_path) and hasattr(rec, 'courses_df') and not rec.courses_df.empty:
+    count = len(rec.courses_df)
+    status_msg = f"✅ Loaded {count} courses from data/courses.csv"
+    status_type = "success"
+else:
+    # If using fallback or file missing
+    status_msg = "⚠️ Using fallback dataset (data/courses.csv not found or invalid)"
+    status_type = "warning"
+
+
+# --- 2. Sidebar Configuration (Clean - No Upload) ---
 with st.sidebar:
-    st.header("📂 Dataset")
-    uploaded_file = st.file_uploader("Upload Courses CSV", type=["csv"], help="Upload your own course dataset.")
+    st.header("Search Configuration")
+    
+    # Status Indicator
+    if status_type == "success":
+        st.caption(status_msg)
+    else:
+        st.warning(status_msg)
     
     st.divider()
     
-    st.header("Search Configuration")
-    # Pre-Run Filters
-    # We need to access the DataFrame to populate these, but it might not be loaded yet.
-    # We will populate them dynamically below or use defaults.
-    
-    # Logic to load data if needed
-    source_to_load = None
-    source_hash = None
-    
-    if uploaded_file:
-        # Compute hash of file content to detect changes
-        file_bytes = uploaded_file.getvalue()
-        source_hash = hashlib.md5(file_bytes).hexdigest()
-        
-        # Read the file to DF
-        try:
-            uploaded_file.seek(0)
-            df_temp = pd.read_csv(uploaded_file)
-            source_to_load = df_temp
-        except Exception as e:
-            st.error(f"Error reading CSV: {e}")
-            source_to_load = None
-    else:
-        # Default file
-        default_path = "data/courses.csv"
-        if os.path.exists(default_path):
-            with open(default_path, "rb") as f:
-                source_hash = hashlib.md5(f.read()).hexdigest()
-            source_to_load = default_path
-        else:
-            source_hash = "fallback_sample"
-            source_to_load = "fallback" # Special flag or just let recommender handle it? 
-            # Recommender load_courses handles paths or DFs.
-            # If we pass a bad path, it uses internal fallback.
-
-    # Check if we need to (re)load
-    if st.session_state["loaded_source_hash"] != source_hash:
-        with st.spinner("Processing dataset (validating, embedding, caching)..."):
-            try:
-                # If source_to_load is "fallback", we pass a non-existent path to trigger recommender fallback?
-                # Or better, pass an empty DF or let recommender handle it.
-                if source_to_load == "fallback":
-                    st.session_state["recommender"].load_courses("non_existent_file.csv")
-                else:
-                    st.session_state["recommender"].load_courses(source_to_load)
-                    
-                st.session_state["loaded_source_hash"] = source_hash
-                st.success("Dataset loaded successfully!")
-            except Exception as e:
-                st.error(f"Failed to load dataset: {e}")
-
-    # Now we have a loaded recommender (hopefully)
-    rec = st.session_state["recommender"]
+    # Pre-Run Filters using loaded data
     df_ref = rec.courses_df
     
-    # Pre-Fill Filter Options
     if df_ref is not None and not df_ref.empty:
         pre_levels = ["Any"] + sorted(list(df_ref['level'].unique())) if 'level' in df_ref.columns else ["Any"]
         pre_categories = ["Any"] + sorted(list(df_ref['category'].unique())) if 'category' in df_ref.columns else ["Any"]
@@ -127,21 +82,15 @@ with st.sidebar:
     show_debug = st.checkbox("Show Debug Info", value=False)
     
     
-# --- 3. Main Content: Header & Dataset Preview ---
+# --- 3. Main Content ---
 st.title("🎓 Zedny Smart Course Recommender")
-
-if uploaded_file and df_ref is not None:
-    with st.expander("📊 Dataset Preview & Stats", expanded=True):
-        st.write(f"**Total Courses:** {len(df_ref)} | **Columns:** {', '.join(df_ref.columns)}")
-        st.dataframe(df_ref.head(10), use_container_width=True)
-        if len(df_ref) > 5000:
-            st.warning("⚠️ Large dataset (>5000 rows). Performance depends on Streamlit Cloud resources.")
-
-# --- 4. Search UI ---
 st.markdown("### 🔍 Find a Course")
 
 # Example Queries
 cols = st.columns([1, 1, 1, 1, 1, 4])
+if "query_input" not in st.session_state:
+    st.session_state["query_input"] = ""
+
 def set_q(txt): st.session_state["query_input"] = txt
 
 if cols[0].button("ML"): set_q("ML")
@@ -153,14 +102,12 @@ if cols[4].button("BI"): set_q("BI")
 query = st.text_input("What do you want to learn?", value=st.session_state["query_input"], placeholder="e.g. Python for Data Science")
 search_clicked = st.button("Get Recommendations", type="primary")
 
-# --- 5. Search Logic ---
+# --- 4. Search Logic ---
 if search_clicked:
     if not query.strip():
         st.warning("Please enter a search query.")
-    elif "recommender" not in st.session_state:
-        st.error("Recommender system is not initialized.")
     else:
-        with st.spinner("Running AI Search..."):
+        with st.spinner("Thinking..."):
             try:
                 # Auto-detect advanced
                 final_pre_level = pre_level
@@ -193,7 +140,6 @@ if search_clicked:
                      st.session_state["raw_results"] = pd.DataFrame()
                 elif results:
                     st.session_state["raw_results"] = pd.DataFrame(results)
-                    # Force session state update? Not strictly needed for DF but good practice
                 else:
                     st.session_state["raw_results"] = pd.DataFrame() 
                     st.warning("No strong matches found. Try changing your query or relax filters.")
@@ -201,7 +147,7 @@ if search_clicked:
             except Exception as e:
                 st.error(f"An error occurred during search: {e}")
 
-# --- 6. Debug Panel ---
+# --- 5. Debug Panel ---
 if show_debug and st.session_state.get("last_debug_info"):
     with st.expander("🛠️ Debug Information", expanded=True):
         d_info = st.session_state["last_debug_info"]
@@ -219,8 +165,8 @@ if show_debug and st.session_state.get("last_debug_info"):
             st.error(f"**Guardrail Warning:** {d_info.get('keyword_warning')}")
 
 
-# --- 7. Results & Post-Filters ---
-if st.session_state["raw_results"] is not None and not st.session_state["raw_results"].empty:
+# --- 6. Results & Post-Filters ---
+if "raw_results" in st.session_state and st.session_state["raw_results"] is not None and not st.session_state["raw_results"].empty:
     st.divider()
     st.header("Refine Results")
     
@@ -277,5 +223,5 @@ if st.session_state["raw_results"] is not None and not st.session_state["raw_res
                     st.caption(f"**Duration:** {row['duration_hours']}h")
                 
                 st.divider()
-elif st.session_state["raw_results"] is None:
-    st.info("👈 Upload a dataset or use the default one, then search to start.")
+elif "raw_results" not in st.session_state or st.session_state["raw_results"] is None:
+    st.info("👈 Use the Search filters and click 'Get Recommendations' to start.")
