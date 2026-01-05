@@ -3,7 +3,7 @@ import json
 import pandas as pd
 import numpy as np
 import re
-from typing import List, Dict, Any, Optional, Union
+from typing import List, Dict, Any, Optional, Union, Tuple
 try:
     from sentence_transformers import SentenceTransformer
     from sklearn.metrics.pairwise import cosine_similarity
@@ -81,12 +81,43 @@ class CourseRecommender:
         if self.model:
             self.embeddings = self.model.encode(self.courses_df['combined_text'].tolist(), show_progress_bar=True)
 
+    def _get_keyword_score(self, query_tokens: List[str], row: Dict[str, Any]) -> Tuple[float, List[str]]:
+        """Calculate keyword match score based on weights."""
+        if not query_tokens:
+            return 0.0, []
+        
+        matches = []
+        score = 0.0
+        
+        title_text = str(row['title']).lower()
+        skills_text = str(row['skills']).lower()
+        desc_text = str(row['description']).lower()
+        
+        for t in query_tokens:
+            found = False
+            if t in title_text:
+                score += 1.0
+                found = True
+            elif t in skills_text:
+                score += 0.5
+                found = True
+            elif t in desc_text:
+                score += 0.2
+                found = True
+            
+            if found:
+                matches.append(t)
+        
+        # Normalize: total possible score is query_tokens len * 1.0 (assuming top matches in title)
+        norm_score = min(score / len(query_tokens), 1.0)
+        return norm_score, matches
+
     def recommend(
         self, 
         user_query: str, 
         top_k: int = 30, 
         pre_filters: Optional[Dict[str, Any]] = None,
-        similarity_threshold: float = 0.2
+        similarity_threshold: float = 0.15
     ) -> Dict[str, Any]:
         if self.courses_df is None:
             self.load_courses("data/courses.csv")
@@ -94,45 +125,34 @@ class CourseRecommender:
         # 1. Level Inference
         inferred_lvl = infer_user_level(user_query)
         
-        # 2. Normalize Query (expansion)
-        expanded_q = normalize_query(user_query, self.abbr_map)
+        # 2. Clean/Normalize Query
+        cleaned_query = normalize_query(user_query, self.abbr_map)
+        strong_keywords = [t for t in cleaned_query.split() if len(t) >= 3]
 
         debug = {
-            "query": user_query,
-            "expanded_query": expanded_q,
+            "original_query": user_query,
+            "cleaned_query": cleaned_query,
+            "strong_keywords": strong_keywords,
             "inferred_level": inferred_lvl,
             "keyword_warning": None
         }
 
-        if not user_query.strip():
+        if not cleaned_query:
             return {"results": [], "debug_info": debug}
 
-        # 3. Guardrail with filler words
-        q_words = set(re.findall(r'\b\w+\b', expanded_q.lower()))
-        fillers = {
-            'want', 'learn', 'need', 'looking', 'interested', 'course', 'training', 'i', 'the', 'to', 'in', 'on', 'at', 'by', 'from', 'with', 'and', 'or', 'a', 'an',
-            'عاوز', 'محتاج', 'اتعلم', 'كورس', 'شرح', 'في', 'على', 'من', 'الى', 'عن'
-        }
-        keywords = [w for w in q_words if w not in fillers and len(w) > 2 and not w.isdigit()]
-        
-        if keywords:
+        # 3. Strong Keyword Guardrail
+        if strong_keywords:
             all_text = " ".join(self.courses_df['combined_text'].tolist()).lower()
-            missing = [k for k in keywords if k not in all_text]
+            missing = [k for k in strong_keywords if k not in all_text]
             if missing:
-                debug["keyword_warning"] = f"No courses found related to: {', '.join(missing)}"
+                debug["keyword_warning"] = f"No courses found related to: {missing[0]}"
                 return {"results": [], "debug_info": debug}
 
-        # 4. Apply Pre-filters
+        # 4. Filter
         filtered_df = self.courses_df.copy()
-        
-        # Priority: select manually > inferred (if manual is Any)
         target_lvl = pre_filters.get('level', "Any") if pre_filters else "Any"
-        if target_lvl == "Any":
-            target_lvl = inferred_lvl
-            
+        if target_lvl == "Any": target_lvl = inferred_lvl
         if target_lvl != "Any":
-            # Map "White" or specific inferred onto Beginner if needed, 
-            # but usually we just look for exact match in 'level' column which we normalized
             lookup = "Beginner" if target_lvl == "White" else target_lvl
             filtered_df = filtered_df[filtered_df['level'] == lookup]
 
@@ -145,14 +165,15 @@ class CourseRecommender:
         if filtered_df.empty:
             return {"results": [], "debug_info": debug}
 
-        # 5. Semantic Search
+        # 5. Semantic Candidates
         indices = filtered_df.index.tolist()
         results = []
         
         if self.model and self.embeddings is not None:
-            q_emb = self.model.encode([expanded_q])
+            q_emb = self.model.encode([cleaned_query])
             sims = cosine_similarity(q_emb, self.embeddings[indices])[0]
             
+            # Use lower threshold initially to catch candidates for hybrid scoring
             mask = sims >= similarity_threshold
             if not np.any(mask):
                 return {"results": [], "debug_info": debug}
@@ -160,21 +181,41 @@ class CourseRecommender:
             v_idx = np.where(mask)[0]
             v_scores = sims[mask]
             
-            sort_idx = np.argsort(v_scores)[::-1][:top_k]
-            top_local = v_idx[sort_idx]
-            final_scores = v_scores[sort_idx]
+            # 6. Hybrid Scoring & Reranking
+            candidates = []
+            for i, local_idx in enumerate(v_idx):
+                course_row = filtered_df.iloc[local_idx]
+                k_score, matches = self._get_keyword_score(strong_keywords, course_row)
+                
+                sem_score = v_scores[i]
+                final_score = 0.7 * sem_score + 0.3 * k_score
+                
+                # Penalty for zero keyword match in strong queries
+                if k_score == 0 and strong_keywords:
+                    final_score *= 0.3
+                
+                course_dict = course_row.to_dict()
+                course_dict.update({
+                    'semantic_score': float(sem_score),
+                    'keyword_score': float(k_score),
+                    'final_score': float(final_score),
+                    'matched_tokens': matches
+                })
+                candidates.append(course_dict)
             
-            if len(final_scores) > 0:
-                s_min, s_max = final_scores.min(), final_scores.max()
-                for i, score in enumerate(final_scores):
-                    course = filtered_df.iloc[top_local[i]].to_dict()
-                    course['similarity_score'] = float(score)
-                    # Strict 1-10
+            # Sort by final score
+            candidates = sorted(candidates, key=lambda x: x['final_score'], reverse=True)
+            top_results = candidates[:top_k]
+            
+            # 7. Rank Normalization 1-10
+            if top_results:
+                f_scores = [c['final_score'] for c in top_results]
+                s_min, s_max = min(f_scores), max(f_scores)
+                for c in top_results:
                     if s_max == s_min:
-                        rank = 5
+                        c['rank'] = 5
                     else:
-                        rank = int(((score - s_min) / (s_max - s_min)) * 9) + 1
-                    course['rank'] = rank
-                    results.append(course)
-        
+                        c['rank'] = int(((c['final_score'] - s_min) / (s_max - s_min)) * 9) + 1
+                results = top_results
+
         return {"results": results, "debug_info": debug}

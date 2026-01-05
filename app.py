@@ -44,6 +44,18 @@ st.markdown("""
         margin-bottom: 20px;
         display: inline-block;
     }
+    .score-breakdown {
+        background-color: #f8f9fa;
+        padding: 10px;
+        border-radius: 6px;
+        font-size: 0.85em;
+        margin-top: 15px;
+        border: 1px dashed #ced4da;
+    }
+    .token-match {
+        color: #28a745;
+        font-weight: 600;
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -85,7 +97,7 @@ with st.sidebar:
 
 # --- 3. Main Content ---
 st.title("🎓 Smart Course Recommender")
-st.markdown("Discover courses tailored to your expertise using semantic AI.")
+st.markdown("Discover relevant courses using Semantic + Keyword Hybrid matching.")
 
 query_col, btn_col = st.columns([4, 1])
 with query_col:
@@ -100,7 +112,7 @@ if go_btn or (user_query and "res" not in st.session_state):
     if not user_query.strip():
         st.warning("Please enter a query.")
     else:
-        with st.spinner("AI analyzing dataset..."):
+        with st.spinner("AI analyzing relevance..."):
             pre_f = {"level": sel_level, "category": sel_cat, "max_duration": sel_dur}
             pkg = rec.recommend(user_query, top_k=top_k, pre_filters=pre_f)
             st.session_state["res"] = pkg
@@ -123,7 +135,7 @@ if "res" in st.session_state:
 
     if not raw_results:
         if not debug.get("keyword_warning"):
-            st.info("No courses match your pre-filters. Try broadening the level or category.")
+            st.info("No courses match your pre-filters or keywords.")
     else:
         # --- 6. POST-RUN FILTERS ---
         st.markdown("---")
@@ -135,7 +147,7 @@ if "res" in st.session_state:
         with post_col2:
             post_lvls = st.multiselect("Filter by Level", sorted(list(set(r['level'] for r in raw_results))))
         with post_col3:
-            st.write("") # align
+            st.write("") 
             filt_inst = st.checkbox("Only with Instructor Name")
 
         # Application
@@ -159,7 +171,7 @@ if "res" in st.session_state:
                 # RANK BADGE
                 st.markdown(f'<span class="rank-badge">Rank: {c["rank"]}/10</span>', unsafe_allow_html=True)
                 
-                # FIXED HYPERLINK TITLE
+                # HYPERLINK TITLE
                 title = c['title']
                 url = c.get('course_link', '#')
                 if url and url != '#':
@@ -170,19 +182,32 @@ if "res" in st.session_state:
                 else:
                     st.markdown(f'<h3 style="margin:0;">{title}</h3>', unsafe_allow_html=True)
 
-                # META & DESCRIPTION
+                # META
                 st.markdown(f"""
                 <div class="meta-info">
                     {c['category']} | {c['level']} | {c['instructor']}
                 </div>
-                <div style="margin-bottom: 20px;">
-                    {c['description'][:300]}...
-                </div>
                 """, unsafe_allow_html=True)
+                
+                # DESCRIPTION
+                st.markdown(f'<div style="margin-bottom: 12px;">{c["description"][:280]}...</div>', unsafe_allow_html=True)
                 
                 # SKILLS
                 sk = str(c['skills']).split('|')
                 st.markdown(" ".join([f"`{s}`" for s in sk if s]))
+
+                # SCORE EXPLAINABILITY
+                matches = c.get('matched_tokens', [])
+                match_str = ", ".join([f'<span class="token-match">{m}</span>' for m in matches]) if matches else "None"
+                
+                st.markdown(f"""
+                <div class="score-breakdown">
+                    <b>Explainability:</b><br>
+                    • Matched Tokens: {match_str}<br>
+                    • Hybrid Score: <b>{c['final_score']:.3f}</b> (Semantic: {c['semantic_score']:.2f} | Keyword: {c['keyword_score']:.2f})
+                </div>
+                """, unsafe_allow_html=True)
+                
                 st.markdown('<div style="height:20px;"></div>', unsafe_allow_html=True)
                 st.markdown("---")
 else:

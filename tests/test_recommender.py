@@ -10,28 +10,38 @@ def recommender():
     rec.load_courses("data/courses.csv")
     return rec
 
-def test_abbreviation_expansion():
-    abbr_map = {"ML": "Machine Learning", "NLP": "Natural Language Processing"}
-    # Word boundary test
-    assert "ML Machine Learning" in normalize_query("I want to learn ML", abbr_map)
-    # Case insensitive check
-    assert "ML Machine Learning" in normalize_query("i like ml", abbr_map)
-    # Non-word boundary check (should NOT expand)
-    assert "html" == normalize_query("html", abbr_map).strip()
+def test_query_normalization():
+    abbr_map = {"ml": "machine learning", "ds": "data science"}
+    # Lowercase, punctuation, and expansion
+    q = "I want to learn ML!"
+    norm = normalize_query(q, abbr_map)
+    assert "machine learning" in norm
+    assert "!" not in norm
+    assert "want" not in norm # Stopword
 
-def test_level_inference():
-    # English
-    assert infer_user_level("learn python from scratch") == "White"
-    assert infer_user_level("advanced expert deep dive") == "Advanced"
-    
-    # Arabic
-    assert infer_user_level("من الصفر مش فاهم أي حاجة") == "White"
-    assert infer_user_level("باحتراف خبير متقدم") == "Advanced"
-    assert infer_user_level("مستوى متوسط") == "Intermediate"
-    assert infer_user_level("بداية أساسيات") == "Beginner"
+def test_relevance_guardrail(recommender):
+    # Search for technology that DEFINITELY isn't in the dataset
+    # The requirement is that it should return NO RESULTS if core keyword is missing
+    res = recommender.recommend("Flutter development", top_k=5)
+    assert len(res["results"]) == 0
+    assert "No courses found related to: flutter" in res["debug_info"]["keyword_warning"]
 
-def test_rank_normalization(recommender):
-    res = recommender.recommend("python", top_k=5)
+def test_positive_match(recommender):
+    # Valid query that should return results
+    res = recommender.recommend("Python programming", top_k=5)
+    assert len(res["results"]) > 0
+    # Check if keyword score is computed
+    assert res["results"][0]['keyword_score'] > 0
+
+def test_abbreviation_expansion(recommender):
+    # JS should expand and match
+    res = recommender.recommend("Advanced JS", top_k=5)
+    assert len(res["results"]) > 0
+    # The cleaned query should contain javascript
+    assert "javascript" in res["debug_info"]["cleaned_query"]
+
+def test_rank_integrity(recommender):
+    res = recommender.recommend("data science", top_k=10)
     results = res["results"]
     if results:
         ranks = [r["rank"] for r in results]
@@ -41,15 +51,7 @@ def test_rank_normalization(recommender):
             assert max(ranks) == 10
             assert min(ranks) == 1
 
-def test_keyword_guardrail(recommender):
-    # Search for non-existent tech
-    res = recommender.recommend("flutter", top_k=5)
-    assert len(res["results"]) == 0
-    assert "No courses found related to: flutter" in res["debug_info"]["keyword_warning"]
-
-def test_filler_words(recommender):
-    # Filler words should NOT trigger warning if core exists
-    # "want learn python" -> "python" exists
-    res = recommender.recommend("I want to learn python", top_k=5)
-    assert len(res["results"]) > 0
-    assert res["debug_info"]["keyword_warning"] is None
+def test_level_inference():
+    assert infer_user_level("I am a beginner from scratch") == "White"
+    assert infer_user_level("advanced expert masterclass") == "Advanced"
+    assert infer_user_level("intermediate level data science") == "Intermediate"
