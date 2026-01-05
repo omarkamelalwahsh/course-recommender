@@ -33,6 +33,15 @@ st.markdown("""
         border-radius: 5px;
         font-weight: bold;
     }
+    .level-badge {
+        background-color: #28a745;
+        color: white;
+        padding: 4px 10px;
+        border-radius: 15px;
+        font-size: 0.9em;
+        margin-top: 5px;
+        display: inline-block;
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -61,18 +70,18 @@ with st.sidebar:
     st.subheader("🎯 Pre-Search Filters")
     df_ref = rec.courses_df
     
-    pre_levels = ["Any"] + sorted(list(df_ref['level'].unique()))
+    pre_levels = ["Any", "White", "Beginner", "Intermediate", "Advanced"]
     pre_categories = ["Any"] + sorted(list(df_ref['category'].unique()))
     
-    sel_level = st.selectbox("Level Preference", pre_levels)
-    sel_category = st.selectbox("Category Preference", pre_categories)
+    sel_level = st.selectbox("Pre-Level (Manual Override)", pre_levels)
+    sel_category = st.selectbox("Pre-Category", pre_categories)
     
     max_dur = int(df_ref['duration_hours'].max()) + 1
-    sel_duration = st.slider("Maximum Duration (Hours)", 0, max_dur, max_dur)
+    sel_duration = st.slider("Pre-Max Duration (Hours)", 0, max_dur, max_dur)
     
     st.markdown("---")
     st.subheader("🛠️ Advanced Settings")
-    top_k = st.number_input("Candidates to Analyze", 5, 100, 30)
+    top_k = st.number_input("Candidates", 5, 100, 30)
     show_debug = st.checkbox("Show Debug Logs")
 
 # --- 3. Main Content ---
@@ -87,7 +96,8 @@ with col2:
     st.write("") # Spacer
     search_btn = st.button("Recommend", type="primary", use_container_width=True)
 
-if search_btn or query:
+# --- 4. Search Logic ---
+if search_btn or (query and "query_done" not in st.session_state):
     if not query.strip():
         st.warning("Please enter a query to get recommendations.")
     else:
@@ -101,11 +111,14 @@ if search_btn or query:
             st.session_state["results"] = results_pkg
             st.session_state["query_done"] = query
 
-# --- 4. Results Display ---
+# --- 5. Results Display ---
 if "results" in st.session_state:
     res_pkg = st.session_state["results"]
     results = res_pkg.get("results", [])
     debug = res_pkg.get("debug_info", {})
+    
+    # Show Inferred Level Badge
+    st.markdown(f'<div class="level-badge">Inferred Level: {debug.get("inferred_level", "Unknown")} (based on your query)</div>', unsafe_allow_html=True)
     
     if debug.get("keyword_warning"):
         st.error(f"⚠️ {debug['keyword_warning']}")
@@ -118,15 +131,16 @@ if "results" in st.session_state:
         if not debug.get("keyword_warning"):
             st.info("No courses match those filters. Try broadening your criteria.")
     else:
-        # --- 5. Post-Filters ---
+        # --- 6. Post-Filters ---
         st.markdown("---")
-        st.subheader("🔍 Refine Results")
+        st.subheader("🔍 Refine Results (Post-run)")
         
         c1, c2, c3 = st.columns(3)
         with c1:
             p_cat = st.multiselect("Filter by Category", sorted(list(set(r['category'] for r in results))))
         with c2:
-            p_lvl = st.multiselect("Filter by Level", sorted(list(set(r['level'] for r in results))))
+            all_lvls = sorted(list(set(r['level'] for r in results)))
+            p_lvl = st.multiselect("Filter by Level", all_lvls)
         with c3:
             has_img = st.checkbox("Only with Preview Image")
             has_inst = st.checkbox("Only with Instructor Name")
@@ -156,13 +170,18 @@ if "results" in st.session_state:
         # Display Cards
         for course in filtered:
             with st.container():
+                # Hyperlink if link exists
+                title_html = course['title']
+                if course.get('course_link'):
+                    title_html = f'<a href="{course["course_link"]}" target="_blank" style="text-decoration: none; color: inherit;">{course["title"]}</a>'
+                
                 st.markdown(f"""
                 <div class="course-card">
                     <div style="display: flex; justify-content: space-between; align-items: start;">
                         <div>
-                            <h3>{course['title']}</h3>
-                            <p><strong>Instructor:</strong> {course['instructor']} | <strong>Category:</strong> {course['category']}</p>
-                            <p style="color: #666;">{course['description'][:200]}...</p>
+                            <h3>{title_html}</h3>
+                            <p><strong>Instructor:</strong> {course['instructor']} | <strong>Category:</strong> {course['category']} | <strong>Level:</strong> {course['level']}</p>
+                            <p style="color: #666;">{course['description'][:250]}...</p>
                         </div>
                         <div style="text-align: right;">
                             <span class="rank-badge">Rank: {course['rank']}/10</span><br>
@@ -177,7 +196,7 @@ if "results" in st.session_state:
                 
                 if course.get('cover') and str(course['cover']) != 'nan' and course['cover'] != '':
                     try:
-                        st.image(course['cover'], width=200)
+                        st.image(course['cover'], width=240)
                     except:
                         pass
                 st.markdown("---")

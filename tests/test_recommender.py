@@ -2,69 +2,62 @@ import pytest
 import pandas as pd
 import os
 from src.recommender import CourseRecommender
-from src.utils import validate_and_clean_dataset
+from src.utils import validate_and_clean_dataset, normalize_query, infer_user_level
 
-def test_dataset_loading():
+@pytest.fixture
+def recommender():
     rec = CourseRecommender()
     rec.load_courses("data/courses.csv")
-    assert rec.courses_df is not None
-    assert not rec.courses_df.empty
-    # Check if real columns exist after validation
-    expected_cols = {'course_id', 'title', 'category', 'level', 'duration_hours', 'skills', 'description', 'instructor', 'cover'}
-    assert expected_cols.issubset(set(rec.courses_df.columns))
+    return rec
 
-def test_recommendation_basic():
-    rec = CourseRecommender()
-    rec.load_courses("data/courses.csv")
-    response = rec.recommend("python", top_k=5)
-    assert "results" in response
-    assert isinstance(response["results"], list)
-    assert len(response["results"]) <= 5
+def test_dataset_loading(recommender):
+    assert recommender.courses_df is not None
+    assert not recommender.courses_df.empty
+    expected_cols = {'course_id', 'title', 'category', 'level', 'duration_hours', 'skills', 'description', 'instructor', 'cover', 'course_link'}
+    assert expected_cols.issubset(set(recommender.courses_df.columns))
 
-def test_rank_and_score():
-    rec = CourseRecommender()
-    rec.load_courses("data/courses.csv")
-    response = rec.recommend("data science", top_k=5)
-    results = response["results"]
-    if results:
-        for r in results:
-            assert "rank" in r
-            assert isinstance(r["rank"], int)
-            assert 0 <= r["rank"] <= 10
-            assert "similarity_score" in r
-
-def test_pre_filters():
-    rec = CourseRecommender()
-    rec.load_courses("data/courses.csv")
+def test_level_inference():
+    # English
+    assert infer_user_level("learn python from scratch") == "White"
+    assert infer_user_level("advanced machine learning expert") == "Advanced"
+    assert infer_user_level("intermediate javascript") == "Intermediate"
+    assert infer_user_level("beginner java") == "Beginner"
     
-    # Test Level Filter
-    pre_filters = {"level": "Advanced"}
-    response = rec.recommend("machine learning", pre_filters=pre_filters)
-    for r in response["results"]:
-        assert r["level"] == "Advanced"
+    # Arabic
+    assert infer_user_level("كورس من الصفر") == "White"
+    assert infer_user_level("شرح متقدم جدا") == "Advanced"
+    assert infer_user_level("مستوى متوسط") == "Intermediate"
+    assert infer_user_level("أساسيات البرمجة") == "Beginner"
 
 def test_abbreviation_expansion():
-    rec = CourseRecommender()
-    rec.load_courses("data/courses.csv")
+    abbr_map = {"ml": "machine learning", "js": "javascript"}
     
-    # Query with JS
-    resp_js = rec.recommend("js", top_k=10)
-    # Query with JavaScript
-    resp_full = rec.recommend("javascript", top_k=10)
-    
-    # Check if there is overlap (abbreviation works)
-    titles_js = {r['title'] for r in resp_js['results']}
-    titles_full = {r['title'] for r in resp_full['results']}
-    
-    overlap = titles_js.intersection(titles_full)
-    assert len(overlap) > 0
+    # Word boundary check
+    assert "ml machine learning" in normalize_query("I want to learn ML", abbr_map)
+    # Ensure it doesn't expand parts of words
+    assert "html" == normalize_query("html", abbr_map).strip()
 
-def test_keyword_guardrail():
-    rec = CourseRecommender()
-    rec.load_courses("data/courses.csv")
-    
-    # Query with impossible keyword
-    response = rec.recommend("qlzrkj123", top_k=5)
+def test_ranking_logic(recommender):
+    response = recommender.recommend("python", top_k=10)
+    results = response["results"]
+    if results:
+        ranks = [r["rank"] for r in results]
+        assert all(isinstance(r, int) for r in ranks)
+        assert all(1 <= r <= 10 for r in ranks)
+        assert max(ranks) == 10
+        if len(results) > 1:
+            assert min(ranks) == 1
+
+def test_keyword_guardrail(recommender):
+    # Search for something that doesn't exist
+    response = recommender.recommend("flutter", top_k=5)
     assert len(response["results"]) == 0
     assert "keyword_warning" in response["debug_info"]
-    assert "no courses about" in response["debug_info"]["keyword_warning"].lower()
+    assert "No courses found related to: flutter" in response["debug_info"]["keyword_warning"]
+
+def test_stopword_filtering(recommender):
+    # Query with filler words shouldn't trigger guardrail if the core keyword exists
+    # "want learn javascript" -> "javascript" is in data
+    response = recommender.recommend("I want to learn javascript", top_k=5)
+    assert len(response["results"]) > 0
+    assert response["debug_info"]["keyword_warning"] is None

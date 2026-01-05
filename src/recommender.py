@@ -17,7 +17,8 @@ from src.utils import (
     validate_and_clean_dataset,
     build_abbreviation_map,
     get_dataset_hash,
-    expand_query
+    normalize_query,
+    infer_user_level
 )
 
 class CourseRecommender:
@@ -32,26 +33,10 @@ class CourseRecommender:
         self.abbr_map = {}
         self.dataset_hash = None
         
-        # Fallback data (minimal for testing)
+        # Fallback data
         self.fallback_data = [
-            {
-                "course_id": 1,
-                "title": "Python for Beginners",
-                "category": "Programming",
-                "level": "Beginner",
-                "duration_hours": 10.5,
-                "skills": "Python",
-                "description": "Learn Python basics."
-            },
-            {
-                "course_id": 2,
-                "title": "Advanced ML",
-                "category": "Data Science",
-                "level": "Advanced",
-                "duration_hours": 25.0,
-                "skills": "Deep Learning",
-                "description": "Master advanced ML."
-            }
+            {"course_id": 1, "title": "Python for Beginners", "category": "Programming", "level": "Beginner", "duration_hours": 10.0, "skills": "Python", "description": "Basics", "instructor": "Unknown", "course_link": ""},
+            {"course_id": 2, "title": "Advanced ML", "category": "Data Science", "level": "Advanced", "duration_hours": 20.0, "skills": "ML", "description": "Expert", "instructor": "Unknown", "course_link": ""}
         ]
 
     def _initialize_model(self):
@@ -133,14 +118,21 @@ class CourseRecommender:
         similarity_threshold: float = 0.2
     ) -> Dict[str, Any]:
         """
-        AI-Powered recommendation with filters and guardrails.
+        Get course recommendations with query expansion, level inference, and strict 1–10 ranking.
         """
         if self.courses_df is None:
             self.load_courses("data/courses.csv")
 
+        # 1. Infer Level
+        inferred_level = infer_user_level(user_query)
+        
+        # 2. Normalize/Expand Query
+        expanded_query = normalize_query(user_query, self.abbr_map)
+
         debug_info = {
             "query": user_query,
-            "expanded_query": user_query,
+            "expanded_query": expanded_query,
+            "inferred_level": inferred_level,
             "pre_filter_count": 0,
             "total_courses": len(self.courses_df) if self.courses_df is not None else 0,
             "top_raw_scores": [],
@@ -149,34 +141,44 @@ class CourseRecommender:
 
         if not user_query.strip():
             return {"results": [], "debug_info": debug_info}
-            
-        # 1. Expand Query
-        expanded_query = expand_query(user_query, self.abbr_map)
-        debug_info["expanded_query"] = expanded_query
 
-        # 2. Keyword Guardrail
+        # 3. Keyword Guardrail with filler word filtering
         clean_q = expanded_query.lower()
         query_words = set(re.findall(r'\b\w+\b', clean_q))
-        stop_words = {
-            'i', 'im', 'me', 'my', 'we', 'you', 'your', 'want', 'like', 'love',
-            'learn', 'learning', 'study', 'course', 'courses', 'find', 'get', 'take',
+        
+        filler_words = {
+            'i', 'im', 'me', 'my', 'we', 'you', 'your', 'want', 'learn', 'need', 'looking', 
+            'interested', 'course', 'courses', 'training', 'tutorial', 'search', 'find', 'get', 'take',
             'please', 'pls', 'can', 'could', 'would', 'should',
-            'in', 'of', 'for', 'and', 'with', 'a', 'the', 'to', 'on', 'at', 'by', 'from', 'about'
+            'in', 'of', 'for', 'and', 'with', 'a', 'the', 'to', 'on', 'at', 'by', 'from', 'about',
+            'beginner', 'intermediate', 'advanced', 'level',
+            'عاوز', 'محتاج', 'اتعلم', 'كورس', 'شرح', 'ابحث', 'عن', 'في', 'من', 'على'
         }
-        keywords = [w for w in query_words if w not in stop_words and len(w) > 2 and not w.isdigit()]
+        
+        keywords = [w for w in query_words if w not in filler_words and len(w) > 2 and not w.isdigit()]
         
         if keywords:
             all_text_blob = " ".join(self.courses_df['combined_text'].tolist()).lower()
             missing_keywords = [kw for kw in keywords if kw not in all_text_blob]
+            
             if missing_keywords:
-                debug_info["keyword_warning"] = f"The dataset has no courses about '{', '.join(missing_keywords)}'"
+                debug_info["keyword_warning"] = f"No courses found related to: {', '.join(missing_keywords)}"
                 return {"results": [], "debug_info": debug_info}
 
-        # 3. Apply Pre-Run Filters
+        # 4. Apply Pre-Run Filters
         filtered_df = self.courses_df.copy()
+        
+        # Priority: Manual filter > Inferred level (if manual is "Any")
+        target_level = pre_filters.get('level', "Any") if pre_filters else "Any"
+        if target_level == "Any":
+            target_level = inferred_level
+            
+        if target_level != "Any":
+            # If level is "White", we treat it as Beginner for dataset filtering
+            lookup_level = "Beginner" if target_level == "White" else target_level
+            filtered_df = filtered_df[filtered_df['level'] == lookup_level]
+
         if pre_filters:
-            if 'level' in pre_filters and pre_filters['level'] != "Any":
-                filtered_df = filtered_df[filtered_df['level'] == pre_filters['level']]
             if 'category' in pre_filters and pre_filters['category'] != "Any":
                 filtered_df = filtered_df[filtered_df['category'] == pre_filters['category']]
             if 'max_duration' in pre_filters:
@@ -186,7 +188,7 @@ class CourseRecommender:
         if filtered_df.empty:
             return {"results": [], "debug_info": debug_info}
 
-        # 4. Semantic Search
+        # 5. Semantic Search
         current_indices = filtered_df.index.tolist()
         results = []
         
@@ -199,30 +201,38 @@ class CourseRecommender:
             if not np.any(valid_mask):
                 return {"results": [], "debug_info": debug_info}
             
-            valid_indices = np.where(valid_mask)[0]
-            valid_scores = similarities[valid_mask]
+            v_indices = np.where(valid_mask)[0]
+            v_scores = similarities[valid_mask]
             
-            sorted_idx = np.argsort(valid_scores)[::-1][:top_k]
-            top_local_indices = valid_indices[sorted_idx]
-            final_scores = valid_scores[sorted_idx]
+            sorted_idx = np.argsort(v_scores)[::-1][:top_k]
+            top_local_idx = v_indices[sorted_idx]
+            final_scores = v_scores[sorted_idx]
             
             debug_info["top_raw_scores"] = [float(s) for s in final_scores[:5]]
             
+            # Safe Normalization into 1–10
             if len(final_scores) > 0:
                 s_min, s_max = final_scores.min(), final_scores.max()
                 for i, score in enumerate(final_scores):
-                    course = filtered_df.iloc[top_local_indices[i]].to_dict()
+                    course = filtered_df.iloc[top_local_idx[i]].to_dict()
                     course['similarity_score'] = float(score)
-                    course['rank'] = 10 if s_max == s_min else int(((score-s_min)/(s_max-s_min))*10)
+                    
+                    if s_max == s_min:
+                        rank = 10 if len(final_scores) == 1 else 5
+                    else:
+                        # Normalize to 1-10: (score - min) / (max - min) * 9 + 1
+                        rank = int(((score - s_min) / (s_max - s_min)) * 9) + 1
+                    
+                    course['rank'] = rank
                     results.append(course)
         else:
-            # Simple keyword fallback
+            # Keyword fallback
             for _, row in filtered_df.iterrows():
                 score = sum(1 for kw in keywords if kw in row['combined_text'].lower())
                 if score > 0:
                     course = row.to_dict()
                     course['similarity_score'] = float(score)
-                    course['rank'] = min(10, int(score))
+                    course['rank'] = min(10, max(1, int(score)))
                     results.append(course)
             results = sorted(results, key=lambda x: x['similarity_score'], reverse=True)[:top_k]
 

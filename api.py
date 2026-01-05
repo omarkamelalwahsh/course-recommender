@@ -13,7 +13,7 @@ from src.recommender import CourseRecommender
 app = FastAPI(
     title="Zedny Course Recommender API",
     description="AI-Powered Course Recommendation System",
-    version="1.1.0"
+    version="1.2.0"
 )
 
 recommender = None
@@ -32,6 +32,7 @@ class RecommendRequest(BaseModel):
 
 class RecommendResponse(BaseModel):
     timestamp: str
+    inferred_level: str
     results: List[Dict[str, Any]]
     debug_info: Dict[str, Any]
 
@@ -55,6 +56,7 @@ def recommend(request: RecommendRequest):
         )
         return RecommendResponse(
             timestamp=datetime.now().isoformat(),
+            inferred_level=response["debug_info"]["inferred_level"],
             results=response["results"],
             debug_info=response["debug_info"]
         )
