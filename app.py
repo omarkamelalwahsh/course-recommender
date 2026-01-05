@@ -127,13 +127,13 @@ if search_clicked:
                 st.session_state["last_debug_info"] = debug_info
                 
                 if debug_info.get("keyword_warning"):
-                     st.warning(debug_info["keyword_warning"])
+                     st.error(debug_info["keyword_warning"])
                      st.session_state["raw_results"] = pd.DataFrame()
                 elif results:
                     st.session_state["raw_results"] = pd.DataFrame(results)
                 else:
                     st.session_state["raw_results"] = pd.DataFrame() 
-                    st.warning("No strong matches found. Try changing your query or relax filters.")
+                    st.error("No strong matches found. Try changing your query or relax filters.")
                     
             except Exception as e:
                 st.error(f"An error occurred during search: {e}")
@@ -180,7 +180,11 @@ if "raw_results" in st.session_state and st.session_state["raw_results"] is not 
         
     with c4:
         res_count = len(df)
-        post_top_n = st.slider("Show Results", 1, res_count, min(5, res_count), key="post_topn")
+        if res_count > 1:
+            post_top_n = st.slider("Show Results", 1, res_count, min(5, res_count), key="post_topn")
+        else:
+            post_top_n = res_count
+            st.caption(f"Showing {res_count} result")
     
     # Apply Post Filters
     filtered_df = df.copy()
