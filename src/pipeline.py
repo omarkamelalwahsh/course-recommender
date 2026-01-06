@@ -147,12 +147,12 @@ class CourseRecommenderPipeline:
                 url=res['url'],
                 rank=res['rank'],
                 score=res['score'], 
+                category=res.get('category', 'General'),
+                level=res.get('level', 'Any'),
                 matched_keywords=res['matched_keywords'],
                 why=res['why'],
                 debug_info={
-                    "desc_snippet": res['description'][:150],
-                    "category": res['category'],
-                    "level": res['level']
+                    "desc_snippet": res['description'][:150]
                 }
             )
             output_list.append(rec)

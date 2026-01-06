@@ -8,7 +8,7 @@ from src.config import TOP_K_DEFAULT
 
 # --- Page Config ---
 st.set_page_config(
-    page_title="المقترح الذكي للكورسات - زدني",
+    page_title="Zedny Course Recommender",
     page_icon="🎓",
     layout="wide",
     initial_sidebar_state="expanded"
@@ -22,15 +22,9 @@ if "pipeline" not in st.session_state:
 def get_pipeline():
     return CourseRecommenderPipeline()
 
-# --- Custom CSS for Cards & RTL ---
+# --- Custom CSS for Cards ---
 st.markdown("""
 <style>
-    /* Force RTL Layout */
-    .element-container, .stMarkdown, .stText, .stTextInput, .stMultiSelect, .stSlider {
-        direction: rtl; 
-        text-align: right;
-    }
-    
     .course-card {
         background-color: #1E1E1E;
         border: 1px solid #333;
@@ -38,8 +32,6 @@ st.markdown("""
         padding: 20px;
         margin-bottom: 20px;
         transition: transform 0.2s;
-        direction: rtl;
-        text-align: right;
     }
     .course-card:hover {
         transform: scale(1.02);
@@ -80,32 +72,31 @@ st.markdown("""
         font-size: 13px;
         color: #aaa;
     }
-    .stAlert { direction: rtl; }
 </style>
 """, unsafe_allow_html=True)
 
 def main():
     # Header
-    st.markdown("<h1 style='text-align: right; color: #4CAF50;'>🎓 المقترح الذكي للكورسات</h1>", unsafe_allow_html=True)
-    st.markdown("<h4 style='text-align: right; color: #888;'>محرك ذكاء اصطناعي للبحث عن الكورسات بدقة عالية</h4>", unsafe_allow_html=True)
+    st.title("🎓 Zedny Smart Course Recommender")
+    st.caption("AI-Powered Semantic Search | v2.1 - Strict & Stable")
 
     # Init Pipeline
     if st.session_state.pipeline is None:
-        with st.spinner("جاري تحميل محرك الذكاء الاصطناعي..."):
+        with st.spinner("Initializing AI Engine..."):
             try:
                 st.session_state.pipeline = get_pipeline()
             except Exception as e:
-                st.error(f"فشل التحميل: {e}")
+                st.error(f"Failed to initialize system: {e}")
                 st.stop()
 
     pipeline = st.session_state.pipeline
 
     # --- Sidebar Filters ---
-    st.sidebar.header("🔍 خيارات البحث")
+    st.sidebar.header("🔍 Search Filters")
     
     # Extract categories
-    categories = ["الكل"]
-    levels = ["الكل"]
+    categories = ["Any"]
+    levels = ["Any"]
     
     if pipeline.courses_df is not None:
         cats = sorted(pipeline.courses_df['category'].dropna().unique().tolist())
@@ -113,31 +104,31 @@ def main():
         categories += cats
         levels += levs
 
-    sel_category = st.sidebar.selectbox("التصنيف", categories)
-    sel_level = st.sidebar.selectbox("المستوى", levels)
-    top_k = st.sidebar.slider("عدد النتائج", 5, 50, TOP_K_DEFAULT)
+    sel_category = st.sidebar.selectbox("Category", categories)
+    sel_level = st.sidebar.selectbox("Level", levels)
+    top_k = st.sidebar.slider("Number of Results", 5, 50, TOP_K_DEFAULT)
     
-    enable_rerank = st.sidebar.checkbox("تفعیل الترتيب العميق (أبطأ ولكن أدق)", value=False)
-    show_debug = st.sidebar.checkbox("إظهار تفاصيل الذكاء الاصطناعي", value=False)
+    enable_rerank = st.sidebar.checkbox("Enable Deep Re-ranking (Slower)", value=False)
+    show_debug = st.sidebar.checkbox("Show Debug Info", value=False)
 
     st.sidebar.markdown("---")
-    st.sidebar.caption("v2.0 - Production | صارم جداً")
+    st.sidebar.caption("v2.1 - Production")
 
     # --- Search Input ---
-    query = st.text_input("ماذا تريد أن تتعلم اليوم؟", placeholder="مثال: بايثون، تسويق، إدارة أعمال...")
+    query = st.text_input("What do you want to learn today?", placeholder="e.g. Python, Marketing, Leadership...")
 
     # --- Logic ---
     if query:
         if len(query.strip()) < 2:
-            st.warning("الرجاء كتابة كلمة بحث واضحة (حرفين على الأقل).")
+            st.warning("Please enter a valid search query (at least 2 chars).")
             return
 
-        with st.spinner("جاري التحليل والبحث..."):
+        with st.spinner("Analyzing and searching..."):
             try:
                 # Prepare Filter
                 filters = {}
-                if sel_category != "الكل": filters['category'] = sel_category
-                if sel_level != "الكل": filters['level'] = sel_level
+                if sel_category != "Any": filters['category'] = sel_category
+                if sel_level != "Any": filters['level'] = sel_level
 
                 request = RecommendRequest(
                     query=query,
@@ -151,24 +142,21 @@ def main():
 
                 # --- Display Results ---
                 if response.total_found == 0:
-                    st.warning("⚠️ لم يتم العثور على أي كورسات تطابق بحثك بدقة.")
-                    st.info("نصيحة: جرب كلمات عامة أكثر، أو تأكد من الإملاء. نظامنا صارم ويعرض فقط الكورسات ذات الصلة المباشرة.")
+                    st.warning("⚠️ No relevant courses found.")
+                    st.info("Tip: Try more general keywords or check your spelling. Our system is strict to ensure relevance.")
                 else:
-                    st.success(f"تم العثور على {response.total_found} كورس مناسب!")
+                    st.success(f"Found {response.total_found} relevant courses!")
                     
                     for res in response.results:
-                        # Translate Level/Category visual if needed, currently passing English data
-                        # We can improve this if we had Arabic mappings for data too.
-                        
                         why_html = ""
                         if show_debug and res.match_reasons:
                             reasons = " • ".join(res.match_reasons)
                             kws = ", ".join(res.matched_keywords)
                             why_html = f"""
                             <div class='why-section'>
-                                <strong>💡 لماذا هذا الكورس؟</strong><br>
-                                الأسباب: {reasons}<br>
-                                الكلمات المطابقة: {kws}
+                                <strong>💡 Why this course?</strong><br>
+                                Reasons: {reasons}<br>
+                                Matched Keywords: {kws}
                             </div>
                             """
                         
@@ -178,8 +166,8 @@ def main():
                                 #{res.rank} {res.title}
                             </a>
                             <div class="course-meta">
-                                <span class="score-badge">الصلة: {int(res.score * 100)}%</span>
-                                | التصنيف: {res.category} | المستوى: {res.level}
+                                <span class="score-badge">Relevance: {int(res.score * 100)}%</span>
+                                | Category: {res.category} | Level: {res.level}
                             </div>
                             <div class="course-desc">
                                 {res.debug_info.get('desc_snippet', '')}...
@@ -190,12 +178,11 @@ def main():
                         st.markdown(card_html, unsafe_allow_html=True)
                         
                     if show_debug:
-                        with st.expander("🛠️ البيانات التقنية الكاملة (JSON)"):
+                        with st.expander("🛠️ Full Technical Data (JSON)"):
                             st.json(response.dict())
 
             except Exception as e:
-                st.error(f"حدث خطأ غير متوقع: {e}")
-                # st.exception(e) # Uncomment for dev trace
-
+                st.error(f"An unexpected error occurred: {e}")
+                
 if __name__ == "__main__":
     main()
