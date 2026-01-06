@@ -1,3 +1,4 @@
+
 import pytest
 from src.pipeline import CourseRecommenderPipeline
 from src.schemas import RecommendRequest
@@ -63,3 +64,15 @@ def test_irrelevant_returns_nothing(pipeline):
     req = RecommendRequest(query="طبخ", top_k=5)
     res = pipeline.recommend(req)
     assert res.total_found == 0
+
+def test_typo_javascript_space(pipeline):
+    """Test: 'java script' -> Should find JavaScript courses, NOT Java/Android."""
+    req = RecommendRequest(query="java script", top_k=5)
+    res = pipeline.recommend(req)
+    
+    assert res.total_found > 0
+    for r in res.results:
+        # Should be JS related
+        print(f"JS Typo Result: {r.title}")
+        is_js = 'javascript' in r.title.lower() or 'javascript' in r.matched_keywords
+        assert is_js, f"Expected JavaScript course, got {r.title}"

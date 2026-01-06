@@ -65,7 +65,7 @@ def normalize_query(query: str) -> str:
         if ar in q:
             q = q.replace(ar, en)
 
-    # 3. Expand common abbreviations
+    # 3. Expand common abbreviations & Fix Common Typos
     abbr_map = {
         'ml': 'machine learning',
         'nlp': 'natural language processing',
@@ -73,7 +73,8 @@ def normalize_query(query: str) -> str:
         'bi': 'business intelligence',
         'cv': 'computer vision',
         'ai': 'artificial intelligence',
-        'ds': 'data science'
+        'ds': 'data science',
+        'java script': 'javascript'  # Fix common typo
     }
     
     # Use regex for word boundary replacement for abbreviations
