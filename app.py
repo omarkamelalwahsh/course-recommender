@@ -134,7 +134,7 @@ def main():
                     query=query,
                     top_k=top_k,
                     filters=filters,
-                    rerank=enable_rerank
+                    enable_reranking=enable_rerank
                 )
                 
                 # Run Pipeline

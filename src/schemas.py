@@ -16,7 +16,7 @@ class RecommendRequest(BaseModel):
     query: str = Field(..., min_length=2, description="User search query")
     top_k: int = Field(30, ge=1, le=100)
     filters: Optional[Dict[str, Any]] = None
-    rerank: bool = False  # Fixed field name mismatch (enable_reranking v. rerank)
+    enable_reranking: bool = False
 
     @validator('query')
     def query_must_not_be_empty(cls, v):
